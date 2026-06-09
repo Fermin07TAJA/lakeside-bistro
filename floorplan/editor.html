@@ -1,0 +1,1459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FoodMap Floorplan Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #202124;
+        color: #eee;
+        overflow: hidden;
+    }
+
+    #app {
+        display: grid;
+        grid-template-columns: 1fr 340px;
+        height: 100vh;
+    }
+
+    #canvasWrap {
+        position: relative;
+        background: #111;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    svg {
+        background: #171717;
+        border: 1px solid #555;
+        width: min(100vw - 340px, 95vh);
+        height: min(100vw - 340px, 95vh);
+        user-select: none;
+    }
+
+    #side {
+        border-left: 1px solid #444;
+        background: #2b2c2f;
+        padding: 12px;
+        overflow-y: auto;
+    }
+
+    h2, h3 {
+        margin: 8px 0;
+    }
+
+    button, input, select {
+        width: 100%;
+        margin: 4px 0;
+        padding: 8px;
+        background: #3a3b3f;
+        color: #eee;
+        border: 1px solid #666;
+        border-radius: 4px;
+    }
+
+    button {
+        cursor: pointer;
+    }
+
+    button:hover {
+        background: #4a4b50;
+    }
+
+    button.active {
+        background: #205493;
+        border-color: #78aefc;
+    }
+
+    button.danger {
+        background: #6b2525;
+    }
+
+    button.danger:hover {
+        background: #842e2e;
+    }
+
+    label {
+        display: block;
+        font-size: 13px;
+        margin-top: 8px;
+        color: #ccc;
+    }
+
+    .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+    }
+
+    .small {
+        font-size: 12px;
+        color: #aaa;
+        line-height: 1.35;
+    }
+
+    #status {
+        margin-top: 8px;
+        padding: 8px;
+        background: #1d1e20;
+        border: 1px solid #444;
+        min-height: 38px;
+        white-space: pre-wrap;
+        font-family: Consolas, monospace;
+        font-size: 12px;
+    }
+
+    #roomList {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .roomItem {
+        padding: 8px;
+        border: 1px solid #555;
+        background: #333;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    .roomItem.selected {
+        border-color: #9fc5ff;
+        background: #1d416d;
+    }
+
+    .shelfItem {
+        margin-left: 12px;
+        margin-top: 4px;
+        padding: 5px;
+        border: 1px solid #444;
+        background: #292929;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 13px;
+    }
+
+    .shelfItem.selected {
+        border-color: #bcf5a9;
+        background: #31512a;
+    }
+
+    .divider {
+        height: 1px;
+        background: #555;
+        margin: 12px 0;
+    }
+</style>
+</head>
+
+<body>
+<div id="app">
+    <div id="canvasWrap">
+        <svg id="svg" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <pattern id="gridPattern" width="50" height="50" patternUnits="userSpaceOnUse">
+                    <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#333" stroke-width="4"/>
+                </pattern>
+            </defs>
+
+            <rect id="gridRect" x="0" y="0" width="10000" height="10000" fill="url(#gridPattern)"></rect>
+
+            <g id="roomsLayer"></g>
+            <g id="shelvesLayer"></g>
+            <g id="labelsLayer"></g>
+            <g id="drawLayer"></g>
+            <g id="handlesLayer"></g>
+        </svg>
+    </div>
+
+    <div id="side">
+        <h2>Floorplan Editor</h2>
+
+        <button id="selectBtn" class="active">Select</button>
+        <button id="drawRoomBtn">Draw Room</button>
+        <button id="drawShelfBtn">Draw Shelf</button>
+
+        <div class="divider"></div>
+
+        <button id="saveBtn">Save floorplan.json</button>
+        <button id="reloadBtn">Reload from disk</button>
+
+        <div class="divider"></div>
+
+        <label>
+            <input id="snapToggle" type="checkbox" checked style="width:auto;">
+            Snap to grid
+        </label>
+
+        <label>Grid size</label>
+        <input id="gridSize" type="number" min="1" value="50">
+
+        <div class="divider"></div>
+
+        <h3>Selected</h3>
+
+        <div id="editPanel">
+            <div class="small">Nothing selected.</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <h3>Rooms</h3>
+        <div id="roomList"></div>
+
+        <div class="divider"></div>
+
+        <div class="small">
+            Coordinates are stored with origin at bottom-left.
+            SVG display is flipped internally.
+            <br><br>
+            Room drawing: click points. Each edge is forced horizontal/vertical. Click near the first point to close.
+            <br><br>
+            Shelf drawing: click Draw Shelf, then click inside a room to place the shelf point.
+        </div>
+
+        <div id="status"></div>
+    </div>
+</div>
+
+<script>
+"use strict";
+
+const svg = document.getElementById("svg");
+
+const roomsLayer = document.getElementById("roomsLayer");
+const shelvesLayer = document.getElementById("shelvesLayer");
+const labelsLayer = document.getElementById("labelsLayer");
+const drawLayer = document.getElementById("drawLayer");
+const handlesLayer = document.getElementById("handlesLayer");
+const gridRect = document.getElementById("gridRect");
+
+const selectBtn = document.getElementById("selectBtn");
+const drawRoomBtn = document.getElementById("drawRoomBtn");
+const drawShelfBtn = document.getElementById("drawShelfBtn");
+const saveBtn = document.getElementById("saveBtn");
+const reloadBtn = document.getElementById("reloadBtn");
+const snapToggle = document.getElementById("snapToggle");
+const gridSizeInput = document.getElementById("gridSize");
+const editPanel = document.getElementById("editPanel");
+const roomList = document.getElementById("roomList");
+const statusBox = document.getElementById("status");
+
+let floorplan = {
+    config: {
+        width: 10000,
+        height: 10000,
+        grid: 50
+    },
+    rooms: []
+};
+
+let mode = "select";
+
+let selected = {
+    type: null,
+    roomIndex: null,
+    shelfIndex: null,
+    vertexIndex: null
+};
+
+let drawingRoom = {
+    active: false,
+    points: []
+};
+
+let drawingShelf = {
+    active: false,
+    roomIndex: null
+};
+
+let dragState = {
+    active: false,
+    type: null,
+    roomIndex: null,
+    shelfIndex: null,
+    edgeIndex: null,
+    vertexIndex: null,
+    startMouse: null,
+    originalRect: null,
+    originalPolygon: null,
+    originalShelves: null
+};
+
+function setStatus(msg) {
+    statusBox.textContent = msg;
+}
+
+function setMode(newMode) {
+    mode = newMode;
+
+    selectBtn.classList.toggle("active", mode === "select");
+    drawRoomBtn.classList.toggle("active", mode === "drawRoom");
+    drawShelfBtn.classList.toggle("active", mode === "drawShelf");
+
+    cancelDrawing();
+    setStatus(`Mode: ${mode}`);
+}
+
+function cancelDrawing() {
+    drawingRoom.active = false;
+    drawingRoom.points = [];
+
+    drawingShelf.active = false;
+    drawingShelf.start = null;
+    drawingShelf.current = null;
+
+    drawLayer.innerHTML = "";
+}
+
+function width() {
+    return Number(floorplan.config.width);
+}
+
+function height() {
+    return Number(floorplan.config.height);
+}
+
+function grid() {
+    return Number(floorplan.config.grid || 50);
+}
+
+function screenToStoredPoint(evt) {
+    const pt = svg.createSVGPoint();
+    pt.x = evt.clientX;
+    pt.y = evt.clientY;
+
+    const svgPoint = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+    let x = svgPoint.x;
+    let y = height() - svgPoint.y;
+
+    if (snapToggle.checked) {
+        const g = Number(gridSizeInput.value || grid());
+        x = Math.round(x / g) * g;
+        y = Math.round(y / g) * g;
+    }
+
+    x = clamp(x, 0, width());
+    y = clamp(y, 0, height());
+
+    return [x, y];
+}
+
+function storedToSvgPoint(p) {
+    return [p[0], height() - p[1]];
+}
+
+function rectStoredToSvg(rect) {
+    const [x1, y1, x2, y2] = normalizeRect(rect);
+    return {
+        x: x1,
+        y: height() - y2,
+        w: x2 - x1,
+        h: y2 - y1
+    };
+}
+
+function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+}
+
+function normalizeRect(rect) {
+    const x1 = Math.min(rect[0], rect[2]);
+    const y1 = Math.min(rect[1], rect[3]);
+    const x2 = Math.max(rect[0], rect[2]);
+    const y2 = Math.max(rect[1], rect[3]);
+    return [x1, y1, x2, y2];
+}
+
+function pointsToSvgString(points) {
+    return points.map(p => {
+        const [x, y] = storedToSvgPoint(p);
+        return `${x},${y}`;
+    }).join(" ");
+}
+
+function centroid(points) {
+    let x = 0;
+    let y = 0;
+
+    for (const p of points) {
+        x += p[0];
+        y += p[1];
+    }
+
+    return [x / points.length, y / points.length];
+}
+
+function rectCenter(rect) {
+    const [x1, y1, x2, y2] = normalizeRect(rect);
+    return [(x1 + x2) / 2, (y1 + y2) / 2];
+}
+
+function forceOrthogonal(prev, raw) {
+    const dx = Math.abs(raw[0] - prev[0]);
+    const dy = Math.abs(raw[1] - prev[1]);
+
+    if (dx >= dy) {
+        return [raw[0], prev[1]];
+    }
+
+    return [prev[0], raw[1]];
+}
+
+function isOrthogonalPolygon(points) {
+    if (points.length < 4) return false;
+
+    for (let i = 0; i < points.length; i++) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+
+        if (a[0] !== b[0] && a[1] !== b[1]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function polygonArea(points) {
+    let area = 0;
+
+    for (let i = 0; i < points.length; i++) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+
+        area += a[0] * b[1] - b[0] * a[1];
+    }
+
+    return area / 2;
+}
+
+function segmentsIntersect(a, b, c, d) {
+    function orient(p, q, r) {
+        const val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1]);
+        if (val === 0) return 0;
+        return val > 0 ? 1 : 2;
+    }
+
+    function onSegment(p, q, r) {
+        return q[0] <= Math.max(p[0], r[0]) &&
+               q[0] >= Math.min(p[0], r[0]) &&
+               q[1] <= Math.max(p[1], r[1]) &&
+               q[1] >= Math.min(p[1], r[1]);
+    }
+
+    const o1 = orient(a, b, c);
+    const o2 = orient(a, b, d);
+    const o3 = orient(c, d, a);
+    const o4 = orient(c, d, b);
+
+    if (o1 !== o2 && o3 !== o4) return true;
+
+    if (o1 === 0 && onSegment(a, c, b)) return true;
+    if (o2 === 0 && onSegment(a, d, b)) return true;
+    if (o3 === 0 && onSegment(c, a, d)) return true;
+    if (o4 === 0 && onSegment(c, b, d)) return true;
+
+    return false;
+}
+
+function polygonSelfIntersects(points) {
+    const n = points.length;
+
+    for (let i = 0; i < n; i++) {
+        const a1 = points[i];
+        const a2 = points[(i + 1) % n];
+
+        for (let j = i + 1; j < n; j++) {
+            const b1 = points[j];
+            const b2 = points[(j + 1) % n];
+
+            const adjacent =
+                i === j ||
+                (i + 1) % n === j ||
+                i === (j + 1) % n;
+
+            if (adjacent) continue;
+
+            if (segmentsIntersect(a1, a2, b1, b2)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function pointInPolygon(point, polygon, allowBoundary = true) {
+    const [x, y] = point;
+    let inside = false;
+
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const a = polygon[i];
+        const b = polygon[j];
+
+        if (allowBoundary && pointOnSegment(point, a, b)) {
+            return true;
+        }
+
+        const intersect =
+            ((a[1] > y) !== (b[1] > y)) &&
+            (x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]);
+
+        if (intersect) inside = !inside;
+    }
+
+    return inside;
+}
+
+function pointOnSegment(p, a, b) {
+    const cross = (p[1] - a[1]) * (b[0] - a[0]) - (p[0] - a[0]) * (b[1] - a[1]);
+    if (Math.abs(cross) > 1e-9) return false;
+
+    return p[0] >= Math.min(a[0], b[0]) &&
+           p[0] <= Math.max(a[0], b[0]) &&
+           p[1] >= Math.min(a[1], b[1]) &&
+           p[1] <= Math.max(a[1], b[1]);
+}
+
+function rectToPolygon(rect) {
+    const [x1, y1, x2, y2] = normalizeRect(rect);
+    return [
+        [x1, y1],
+        [x2, y1],
+        [x2, y2],
+        [x1, y2]
+    ];
+}
+
+function polygonsOverlap(polyA, polyB, allowTouch = true) {
+    for (let i = 0; i < polyA.length; i++) {
+        const a1 = polyA[i];
+        const a2 = polyA[(i + 1) % polyA.length];
+
+        for (let j = 0; j < polyB.length; j++) {
+            const b1 = polyB[j];
+            const b2 = polyB[(j + 1) % polyB.length];
+
+            if (segmentsIntersect(a1, a2, b1, b2)) {
+                if (allowTouch) {
+                    continue;
+                }
+                return true;
+            }
+        }
+    }
+
+    if (pointInPolygon(polyA[0], polyB, !allowTouch)) return true;
+    if (pointInPolygon(polyB[0], polyA, !allowTouch)) return true;
+
+    return false;
+}
+
+function polygonInsidePolygon(inner, outer) {
+    for (const p of inner) {
+        if (!pointInPolygon(p, outer, true)) return false;
+    }
+
+    for (let i = 0; i < inner.length; i++) {
+        const a1 = inner[i];
+        const a2 = inner[(i + 1) % inner.length];
+
+        for (let j = 0; j < outer.length; j++) {
+            const b1 = outer[j];
+            const b2 = outer[(j + 1) % outer.length];
+
+            if (segmentsIntersect(a1, a2, b1, b2)) {
+                if (
+                    pointOnSegment(a1, b1, b2) &&
+                    pointOnSegment(a2, b1, b2)
+                ) {
+                    continue;
+                }
+
+                if (
+                    pointOnSegment(b1, a1, a2) &&
+                    pointOnSegment(b2, a1, a2)
+                ) {
+                    continue;
+                }
+
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+function validateRoomPolygon(points, ignoreRoomIndex = null) {
+    if (points.length < 4) return "Room needs at least 4 vertices.";
+    if (!isOrthogonalPolygon(points)) return "Room edges must be horizontal/vertical.";
+    if (Math.abs(polygonArea(points)) < 1) return "Room has zero area.";
+    if (polygonSelfIntersects(points)) return "Room self-intersects.";
+
+    for (let i = 0; i < floorplan.rooms.length; i++) {
+        if (i === ignoreRoomIndex) continue;
+
+        if (polygonsOverlap(points, floorplan.rooms[i].polygon, false)) {
+            return `Room overlaps ${floorplan.rooms[i].id}.`;
+        }
+    }
+
+    return null;
+}
+
+function validateShelfPoint(roomIndex, point) {
+    const room = floorplan.rooms[roomIndex];
+
+    if (!pointInPolygon(point, room.polygon, true)) {
+        return "Shelf point must be inside selected room.";
+    }
+
+    return null;
+}
+
+function clearSelection() {
+    selected = {
+        type: null,
+        roomIndex: null,
+        shelfIndex: null,
+        vertexIndex: null
+    };
+}
+
+function selectRoom(roomIndex) {
+    selected = {
+        type: "room",
+        roomIndex,
+        shelfIndex: null,
+        vertexIndex: null
+    };
+    render();
+}
+
+function selectShelf(roomIndex, shelfIndex) {
+    selected = {
+        type: "shelf",
+        roomIndex,
+        shelfIndex,
+        vertexIndex: null
+    };
+    render();
+}
+
+function render() {
+    roomsLayer.innerHTML = "";
+    shelvesLayer.innerHTML = "";
+    labelsLayer.innerHTML = "";
+    handlesLayer.innerHTML = "";
+    drawLayer.innerHTML = "";
+
+    svg.setAttribute("viewBox", `0 0 ${width()} ${height()}`);
+    gridRect.setAttribute("width", width());
+    gridRect.setAttribute("height", height());
+
+    const pattern = document.getElementById("gridPattern");
+    pattern.setAttribute("width", grid());
+    pattern.setAttribute("height", grid());
+    pattern.querySelector("path").setAttribute("d", `M ${grid()} 0 L 0 0 0 ${grid()}`);
+
+    for (let r = 0; r < floorplan.rooms.length; r++) {
+        renderRoom(r);
+    }
+
+    for (let r = 0; r < floorplan.rooms.length; r++) {
+        renderShelves(r);
+    }
+
+    renderLabels();
+    renderHandles();
+    renderDrawing();
+    renderSidePanel();
+    renderRoomList();
+}
+
+function renderRoom(roomIndex) {
+    const room = floorplan.rooms[roomIndex];
+
+    const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    poly.setAttribute("points", pointsToSvgString(room.polygon));
+    poly.setAttribute("fill", selected.type === "room" && selected.roomIndex === roomIndex ? "rgba(60,140,255,0.45)" : "rgba(60,140,255,0.25)");
+    poly.setAttribute("stroke", selected.type === "room" && selected.roomIndex === roomIndex ? "#b8d8ff" : "#6da9ff");
+    poly.setAttribute("stroke-width", "20");
+    poly.style.cursor = mode === "drawShelf" ? "crosshair" : "move";
+
+    poly.addEventListener("mousedown", evt => {
+        evt.stopPropagation();
+
+        const p = screenToStoredPoint(evt);
+
+        if (mode === "drawShelf") {
+            addShelfAtPoint(roomIndex, p);
+            return;
+        }
+
+        selectRoom(roomIndex);
+
+        if (mode === "select") {
+            dragState = {
+                active: true,
+                type: "roomMove",
+                roomIndex,
+                shelfIndex: null,
+                edgeIndex: null,
+                vertexIndex: null,
+                startMouse: p,
+                originalRect: null,
+                originalPolygon: room.polygon.map(p => [...p]),
+                originalShelves: room.shelves.map(s => ({
+                    id: s.id,
+                    point: [...s.point]
+                }))
+            };
+        }
+    });
+
+    roomsLayer.appendChild(poly);
+}
+
+function renderShelves(roomIndex) {
+    const room = floorplan.rooms[roomIndex];
+
+    for (let s = 0; s < room.shelves.length; s++) {
+        const shelf = room.shelves[s];
+        const [x, y] = storedToSvgPoint(shelf.point);
+
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", x);
+        circle.setAttribute("cy", y);
+        circle.setAttribute("r", "95");
+        circle.setAttribute("fill", selected.type === "shelf" && selected.roomIndex === roomIndex && selected.shelfIndex === s ? "rgba(80,255,120,0.9)" : "rgba(80,255,120,0.55)");
+        circle.setAttribute("stroke", selected.type === "shelf" && selected.roomIndex === roomIndex && selected.shelfIndex === s ? "#d0ffc8" : "#79e686");
+        circle.setAttribute("stroke-width", "18");
+        circle.style.cursor = "move";
+
+        circle.addEventListener("mousedown", evt => {
+            evt.stopPropagation();
+            selectShelf(roomIndex, s);
+
+            if (mode === "select") {
+                dragState = {
+                    active: true,
+                    type: "shelfMove",
+                    roomIndex,
+                    shelfIndex: s,
+                    edgeIndex: null,
+                    vertexIndex: null,
+                    startMouse: screenToStoredPoint(evt),
+                    originalRect: null,
+                    originalPolygon: null,
+                    originalShelves: null
+                };
+            }
+        });
+
+        shelvesLayer.appendChild(circle);
+    }
+}
+
+function renderLabels() {
+    for (let r = 0; r < floorplan.rooms.length; r++) {
+        const room = floorplan.rooms[r];
+        const minX = Math.min(...room.polygon.map(p => p[0]));
+        const minY = Math.min(...room.polygon.map(p => p[1]));
+
+        const c = room.labelOffset
+            ? [minX + room.labelOffset[0], minY + room.labelOffset[1]]
+            : centroid(room.polygon);
+        const [x, y] = storedToSvgPoint(c);
+
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", x);
+        text.setAttribute("y", y);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("dominant-baseline", "middle");
+        text.setAttribute("font-size", "260");
+        text.setAttribute("fill", "#ddd");
+        text.setAttribute("stroke", "#111");
+        text.setAttribute("stroke-width", "8");
+        text.textContent = room.id;
+        text.style.pointerEvents = "none";
+        labelsLayer.appendChild(text);
+
+        for (let s = 0; s < room.shelves.length; s++) {
+            const shelf = room.shelves[s];
+            const [sx, sy] = storedToSvgPoint(shelf.point);
+
+            const st = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            st.setAttribute("x", sx);
+            st.setAttribute("y", sy);
+            st.setAttribute("text-anchor", "middle");
+            st.setAttribute("dominant-baseline", "middle");
+            st.setAttribute("font-size", "180");
+            st.setAttribute("fill", "#fff");
+            st.setAttribute("stroke", "#111");
+            st.setAttribute("stroke-width", "6");
+            st.textContent = shelf.id;
+            st.style.pointerEvents = "none";
+            labelsLayer.appendChild(st);
+        }
+    }
+}
+
+function renderHandles() {
+    if (mode !== "select") return;
+
+    if (selected.type === "room") {
+        const room = floorplan.rooms[selected.roomIndex];
+
+        for (let i = 0; i < room.polygon.length; i++) {
+            const a = room.polygon[i];
+            const b = room.polygon[(i + 1) % room.polygon.length];
+
+            const [ax, ay] = storedToSvgPoint(a);
+            const [bx, by] = storedToSvgPoint(b);
+
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("x1", ax);
+            line.setAttribute("y1", ay);
+            line.setAttribute("x2", bx);
+            line.setAttribute("y2", by);
+            line.setAttribute("stroke", "#fff");
+            line.setAttribute("stroke-width", "55");
+            line.setAttribute("stroke-linecap", "round");
+            line.setAttribute("opacity", "0.85");
+            line.style.cursor = a[0] === b[0] ? "ew-resize" : "ns-resize";
+
+            line.addEventListener("mousedown", evt => {
+                evt.stopPropagation();
+
+                dragState = {
+                    active: true,
+                    type: "roomEdge",
+                    roomIndex: selected.roomIndex,
+                    shelfIndex: null,
+                    edgeIndex: i,
+                    vertexIndex: null,
+                    startMouse: screenToStoredPoint(evt),
+                    originalRect: null,
+                    originalPolygon: room.polygon.map(p => [...p]),
+                    originalShelves: room.shelves.map(s => ({
+                        id: s.id,
+                        rect: [...s.point]
+                    }))
+                };
+            });
+
+            handlesLayer.appendChild(line);
+        }
+    }
+}
+
+
+function renderDrawing() {
+    if (drawingRoom.active && drawingRoom.points.length > 0) {
+        const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        pl.setAttribute("points", pointsToSvgString(drawingRoom.points));
+        pl.setAttribute("fill", "none");
+        pl.setAttribute("stroke", "#ffdd66");
+        pl.setAttribute("stroke-width", "18");
+        drawLayer.appendChild(pl);
+
+        for (const p of drawingRoom.points) {
+            const [x, y] = storedToSvgPoint(p);
+            const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            c.setAttribute("cx", x);
+            c.setAttribute("cy", y);
+            c.setAttribute("r", "55");
+            c.setAttribute("fill", "#ffdd66");
+            drawLayer.appendChild(c);
+        }
+    }
+
+    if (drawingShelf.active && drawingShelf.start && drawingShelf.current) {
+        const rect = normalizeRect([
+            drawingShelf.start[0],
+            drawingShelf.start[1],
+            drawingShelf.current[0],
+            drawingShelf.current[1]
+        ]);
+
+        const rr = rectStoredToSvg(rect);
+        const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        el.setAttribute("x", rr.x);
+        el.setAttribute("y", rr.y);
+        el.setAttribute("width", rr.w);
+        el.setAttribute("height", rr.h);
+        el.setAttribute("fill", "rgba(255,221,102,0.35)");
+        el.setAttribute("stroke", "#ffdd66");
+        el.setAttribute("stroke-width", "18");
+        drawLayer.appendChild(el);
+    }
+}
+
+function renderSidePanel() {
+    if (selected.type === null) {
+        editPanel.innerHTML = `<div class="small">Nothing selected.</div>`;
+        return;
+    }
+
+    if (selected.type === "room") {
+        const room = floorplan.rooms[selected.roomIndex];
+
+        editPanel.innerHTML = `
+            <label>Room ID, 3 letters</label>
+            <input id="roomIdInput" value="${escapeHtml(room.id)}" maxlength="3">
+
+            <label>Room name</label>
+            <input id="roomNameInput" value="${escapeHtml(room.name)}">
+
+            <button id="applyRoomBtn">Apply room changes</button>
+            <button id="deleteRoomBtn" class="danger">Delete room</button>
+
+            <div class="small">
+                Vertices: ${room.polygon.length}<br>
+                Shelves: ${room.shelves.length}
+            </div>
+        `;
+
+        document.getElementById("applyRoomBtn").addEventListener("click", applyRoomChanges);
+        document.getElementById("deleteRoomBtn").addEventListener("click", deleteSelectedRoom);
+        return;
+    }
+
+    if (selected.type === "shelf") {
+        const room = floorplan.rooms[selected.roomIndex];
+        const shelf = room.shelves[selected.shelfIndex];
+
+        editPanel.innerHTML = `
+            <label>Room</label>
+            <input value="${escapeHtml(room.id)}" disabled>
+
+            <label>Shelf number</label>
+            <input id="shelfIdInput" type="number" step="1" value="${shelf.id}">
+
+            <button id="applyShelfBtn">Apply shelf changes</button>
+            <button id="deleteShelfBtn" class="danger">Delete shelf</button>
+        `;
+
+        document.getElementById("applyShelfBtn").addEventListener("click", applyShelfChanges);
+        document.getElementById("deleteShelfBtn").addEventListener("click", deleteSelectedShelf);
+    }
+}
+
+function renderRoomList() {
+    roomList.innerHTML = "";
+
+    for (let r = 0; r < floorplan.rooms.length; r++) {
+        const room = floorplan.rooms[r];
+
+        const item = document.createElement("div");
+        item.className = "roomItem";
+        if (selected.type === "room" && selected.roomIndex === r) {
+            item.classList.add("selected");
+        }
+
+        item.innerHTML = `<b>${escapeHtml(room.id)}</b> — ${escapeHtml(room.name)}<br><span class="small">${room.shelves.length} shelves</span>`;
+        item.addEventListener("click", () => selectRoom(r));
+        roomList.appendChild(item);
+
+        for (let s = 0; s < room.shelves.length; s++) {
+            const shelf = room.shelves[s];
+
+            const shelfItem = document.createElement("div");
+            shelfItem.className = "shelfItem";
+            if (selected.type === "shelf" && selected.roomIndex === r && selected.shelfIndex === s) {
+                shelfItem.classList.add("selected");
+            }
+
+            shelfItem.textContent = `Shelf ${shelf.id}`;
+            shelfItem.addEventListener("click", evt => {
+                evt.stopPropagation();
+                selectShelf(r, s);
+            });
+
+            roomList.appendChild(shelfItem);
+        }
+    }
+}
+
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, ch => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+    }[ch]));
+}
+
+function applyRoomChanges() {
+    const room = floorplan.rooms[selected.roomIndex];
+
+    const id = document.getElementById("roomIdInput").value.trim().toUpperCase();
+    const name = document.getElementById("roomNameInput").value.trim();
+
+    if (!/^[A-Z0-9]{3}$/.test(id)) {
+        setStatus("Room ID must be exactly 3 letters/numbers.");
+        return;
+    }
+
+    for (let i = 0; i < floorplan.rooms.length; i++) {
+        if (i !== selected.roomIndex && floorplan.rooms[i].id === id) {
+            setStatus(`Room ID ${id} already exists.`);
+            return;
+        }
+    }
+
+    if (!name) {
+        setStatus("Room name cannot be blank.");
+        return;
+    }
+
+    room.id = id;
+    room.name = name;
+
+    setStatus("Room updated.");
+    render();
+}
+
+function applyShelfChanges() {
+    const room = floorplan.rooms[selected.roomIndex];
+    const shelf = room.shelves[selected.shelfIndex];
+
+    const newId = Number(document.getElementById("shelfIdInput").value);
+
+    if (!Number.isInteger(newId) || newId < 1) {
+        setStatus("Shelf ID must be a positive integer.");
+        return;
+    }
+
+    for (let i = 0; i < room.shelves.length; i++) {
+        if (i !== selected.shelfIndex && room.shelves[i].id === newId) {
+            setStatus(`Shelf ${newId} already exists in ${room.id}.`);
+            return;
+        }
+    }
+
+    shelf.id = newId;
+    setStatus("Shelf updated.");
+    render();
+}
+
+function deleteSelectedRoom() {
+    if (selected.type !== "room") return;
+
+    const room = floorplan.rooms[selected.roomIndex];
+    const ok = confirm(`Delete room ${room.id} and all shelves inside it?`);
+
+    if (!ok) return;
+
+    floorplan.rooms.splice(selected.roomIndex, 1);
+    clearSelection();
+    setStatus("Room deleted.");
+    render();
+}
+
+function deleteSelectedShelf() {
+    if (selected.type !== "shelf") return;
+
+    const room = floorplan.rooms[selected.roomIndex];
+    const shelf = room.shelves[selected.shelfIndex];
+
+    const ok = confirm(`Delete shelf ${shelf.id} from room ${room.id}?`);
+
+    if (!ok) return;
+
+    room.shelves.splice(selected.shelfIndex, 1);
+    clearSelection();
+    setStatus("Shelf deleted.");
+    render();
+}
+
+function addRoomFromDrawing() {
+    let points = [...drawingRoom.points];
+
+    if (points.length < 4) {
+        setStatus("Room needs at least 4 vertices.");
+        return;
+    }
+
+    const first = points[0];
+    const last = points[points.length - 1];
+
+    if (first[0] !== last[0] && first[1] !== last[1]) {
+        setStatus("Last edge to first point must be horizontal or vertical.");
+        return;
+    }
+
+    const error = validateRoomPolygon(points);
+    if (error) {
+        setStatus(error);
+        return;
+    }
+
+    const id = prompt("Room ID, exactly 3 letters/numbers:")?.trim().toUpperCase();
+    if (!id || !/^[A-Z0-9]{3}$/.test(id)) {
+        setStatus("Invalid room ID.");
+        return;
+    }
+
+    for (const room of floorplan.rooms) {
+        if (room.id === id) {
+            setStatus(`Room ${id} already exists.`);
+            return;
+        }
+    }
+
+    const name = prompt("Room name:")?.trim() || id;
+
+    floorplan.rooms.push({
+        id,
+        name,
+        polygon: points,
+        shelves: []
+    });
+
+    cancelDrawing();
+    selectRoom(floorplan.rooms.length - 1);
+    setStatus(`Room ${id} added.`);
+}
+
+function addShelfAtPoint(roomIndex, point) {
+    const room = floorplan.rooms[roomIndex];
+
+    const error = validateShelfPoint(roomIndex, point);
+
+    if (error) {
+        setStatus(error);
+        render();
+        return;
+    }
+
+    const idRaw = prompt(`Shelf number for ${room.id}:`);
+    const id = Number(idRaw);
+
+    if (!Number.isInteger(id) || id < 1) {
+        setStatus("Invalid shelf number.");
+        render();
+        return;
+    }
+
+    for (const shelf of room.shelves) {
+        if (shelf.id === id) {
+            setStatus(`Shelf ${id} already exists in ${room.id}.`);
+            render();
+            return;
+        }
+    }
+
+    room.shelves.push({
+        id,
+        point
+    });
+
+    selectShelf(roomIndex, room.shelves.length - 1);
+    setStatus(`Shelf ${id} added to ${room.id}.`);
+}
+
+function findRoomAtPoint(p) {
+    for (let i = floorplan.rooms.length - 1; i >= 0; i--) {
+        if (pointInPolygon(p, floorplan.rooms[i].polygon, true)) {
+            return i;
+        }
+    }
+
+    return null;
+}
+
+svg.addEventListener("mousedown", evt => {
+    const p = screenToStoredPoint(evt);
+
+    if (mode === "select") {
+        clearSelection();
+        render();
+        return;
+    }
+
+    if (mode === "drawRoom") {
+        if (!drawingRoom.active) {
+            drawingRoom.active = true;
+            drawingRoom.points = [p];
+            render();
+            return;
+        }
+
+        const points = drawingRoom.points;
+        const first = points[0];
+
+        const dx = Math.abs(p[0] - first[0]);
+        const dy = Math.abs(p[1] - first[1]);
+        const nearFirst = dx <= grid() * 1.5 && dy <= grid() * 1.5;
+
+        if (nearFirst && points.length >= 4) {
+            addRoomFromDrawing();
+            return;
+        }
+
+        const prev = points[points.length - 1];
+        const next = forceOrthogonal(prev, p);
+
+        if (next[0] === prev[0] && next[1] === prev[1]) {
+            setStatus("Duplicate point ignored.");
+            return;
+        }
+
+        points.push(next);
+        render();
+        return;
+    }
+
+    if (mode === "drawShelf") {
+        const roomIndex = findRoomAtPoint(p);
+
+        if (roomIndex === null) {
+            setStatus("Click inside a room to place a shelf.");
+            return;
+        }
+
+        addShelfAtPoint(roomIndex, p);
+        return;
+    }
+});
+
+svg.addEventListener("mousemove", evt => {
+    const p = screenToStoredPoint(evt);
+
+    if (dragState.active) {
+        handleDrag(p);
+    }
+});
+
+svg.addEventListener("mouseup", evt => {
+
+    if (dragState.active) {
+        dragState.active = false;
+        dragState = {
+            active: false,
+            type: null,
+            roomIndex: null,
+            shelfIndex: null,
+            vertexIndex: null,
+            startMouse: null,
+            originalRect: null
+        };
+    }
+});
+
+svg.addEventListener("contextmenu", evt => {
+    evt.preventDefault();
+
+    if (drawingRoom.active || drawingShelf.active) {
+        cancelDrawing();
+        render();
+        setStatus("Drawing canceled.");
+    }
+});
+
+function validateRoomAndShelves(roomIndex, polygon) {
+    const room = floorplan.rooms[roomIndex];
+
+    const roomError = validateRoomPolygon(polygon, roomIndex);
+    if (roomError) return roomError;
+
+    for (const shelf of room.shelves) {
+        if (!pointInPolygon(shelf.point, polygon, true)) {
+            return `Shelf ${shelf.id} would be outside room ${room.id}.`;
+        }
+    }
+
+    return null;
+}
+
+function moveRoom(roomIndex, dx, dy) {
+    const room = floorplan.rooms[roomIndex];
+
+    room.polygon = dragState.originalPolygon.map(p => [
+        clamp(p[0] + dx, 0, width()),
+        clamp(p[1] + dy, 0, height())
+    ]);
+
+    room.shelves = dragState.originalShelves.map(s => ({
+        id: s.id,
+        point: [
+            clamp(s.point[0] + dx, 0, width()),
+            clamp(s.point[1] + dy, 0, height())
+        ]
+    }));
+}
+
+function moveRoomEdge(roomIndex, edgeIndex, mousePoint) {
+    const room = floorplan.rooms[roomIndex];
+    const polygon = dragState.originalPolygon.map(p => [...p]);
+
+    const aIndex = edgeIndex;
+    const bIndex = (edgeIndex + 1) % polygon.length;
+
+    const a = polygon[aIndex];
+    const b = polygon[bIndex];
+
+    if (a[0] === b[0]) {
+        const newX = mousePoint[0];
+        polygon[aIndex][0] = newX;
+        polygon[bIndex][0] = newX;
+    } else if (a[1] === b[1]) {
+        const newY = mousePoint[1];
+        polygon[aIndex][1] = newY;
+        polygon[bIndex][1] = newY;
+    }
+
+    return polygon;
+}
+
+function handleDrag(p) {
+    if (dragState.type === "roomMove") {
+        const roomIndex = dragState.roomIndex;
+
+        const dx = p[0] - dragState.startMouse[0];
+        const dy = p[1] - dragState.startMouse[1];
+
+        const oldPolygon = floorplan.rooms[roomIndex].polygon.map(pt => [...pt]);
+        const oldShelves = floorplan.rooms[roomIndex].shelves.map(s => ({
+            id: s.id,
+            rect: [...s.rect]
+        }));
+
+        moveRoom(roomIndex, dx, dy);
+
+        const error = validateRoomAndShelves(roomIndex, floorplan.rooms[roomIndex].polygon);
+
+        if (error) {
+            floorplan.rooms[roomIndex].polygon = oldPolygon;
+            floorplan.rooms[roomIndex].shelves = oldShelves;
+            setStatus(error);
+        } else {
+            setStatus("Room moved.");
+        }
+
+        render();
+        return;
+    }
+
+    if (dragState.type === "roomEdge") {
+        const roomIndex = dragState.roomIndex;
+        const room = floorplan.rooms[roomIndex];
+
+        const oldPolygon = room.polygon.map(pt => [...pt]);
+
+        const newPolygon = moveRoomEdge(roomIndex, dragState.edgeIndex, p);
+        const error = validateRoomAndShelves(roomIndex, newPolygon);
+
+        if (error) {
+            room.polygon = oldPolygon;
+            setStatus(error);
+        } else {
+            room.polygon = newPolygon;
+            setStatus("Wall moved.");
+        }
+
+        render();
+        return;
+    }
+
+    if (dragState.type === "shelfMove") {
+        const room = floorplan.rooms[dragState.roomIndex];
+        const shelf = room.shelves[dragState.shelfIndex];
+
+        const point = p;
+        const error = validateShelfPoint(dragState.roomIndex, point);
+
+        if (!error) {
+            shelf.point = point;
+            setStatus("Shelf moved.");
+        } else {
+            setStatus(error);
+        }
+
+        render();
+        return;
+    }
+}
+
+async function loadFloorplan() {
+    const res = await fetch("/api/floorplan");
+
+    if (!res.ok) {
+        setStatus("Failed to load floorplan.");
+        return;
+    }
+
+    floorplan = await res.json();
+
+    gridSizeInput.value = floorplan.config.grid || 50;
+
+    render();
+    setStatus("Loaded floorplan.json.");
+}
+
+async function saveFloorplan() {
+    floorplan.config.grid = Number(gridSizeInput.value || 50);
+
+    const res = await fetch("/api/floorplan", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(floorplan)
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+        setStatus(data.error || "Save failed.");
+        return;
+    }
+
+    setStatus("Saved floorplan.json.");
+}
+
+selectBtn.addEventListener("click", () => setMode("select"));
+drawRoomBtn.addEventListener("click", () => setMode("drawRoom"));
+drawShelfBtn.addEventListener("click", () => setMode("drawShelf"));
+saveBtn.addEventListener("click", saveFloorplan);
+reloadBtn.addEventListener("click", loadFloorplan);
+
+gridSizeInput.addEventListener("change", () => {
+    floorplan.config.grid = Number(gridSizeInput.value || 50);
+    render();
+});
+
+window.addEventListener("keydown", evt => {
+    if (evt.key === "Escape") {
+        cancelDrawing();
+        setMode("select");
+        render();
+    }
+
+    if (evt.key === "Delete") {
+        if (selected.type === "room") deleteSelectedRoom();
+        if (selected.type === "shelf") deleteSelectedShelf();
+    }
+});
+
+loadFloorplan();
+</script>
+</body>
+</html>

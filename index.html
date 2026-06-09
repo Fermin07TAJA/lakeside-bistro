@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FoodMap</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #202124;
+    color: #eee;
+}
+
+#app {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    height: 100vh;
+}
+
+#mapWrap {
+    background: #111;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+svg {
+    background: #171717;
+    border: 1px solid #555;
+    width: min(calc(100vw - 360px), 96vh);
+    height: min(calc(100vw - 360px), 96vh);
+    user-select: none;
+}
+
+#side {
+    background: #2b2c2f;
+    border-left: 1px solid #444;
+    padding: 12px;
+    overflow-y: auto;
+}
+
+h2, h3 { margin: 8px 0; }
+
+input, textarea, button, select {
+    width: 100%;
+    margin: 4px 0;
+    padding: 8px;
+    background: #3a3b3f;
+    color: #eee;
+    border: 1px solid #666;
+    border-radius: 4px;
+}
+
+button { cursor: pointer; }
+button:hover { background: #4a4b50; }
+
+button.danger { background: #6b2525; }
+button.danger:hover { background: #842e2e; }
+
+label {
+    display: block;
+    font-size: 13px;
+    color: #ccc;
+    margin-top: 8px;
+}
+
+.small {
+    font-size: 12px;
+    color: #aaa;
+    line-height: 1.35;
+}
+
+.divider {
+    height: 1px;
+    background: #555;
+    margin: 12px 0;
+}
+
+.foodItem {
+    border: 1px solid #555;
+    background: #333;
+    padding: 8px;
+    border-radius: 4px;
+    margin: 6px 0;
+    cursor: pointer;
+}
+
+.foodItem.selected {
+    border-color: #9fc5ff;
+    background: #1d416d;
+}
+
+.foodImg {
+    width: 100%;
+    max-height: 220px;
+    object-fit: contain;
+    background: #111;
+    border: 1px solid #555;
+    margin-top: 6px;
+}
+
+#status {
+    margin-top: 8px;
+    padding: 8px;
+    background: #1d1e20;
+    border: 1px solid #444;
+    min-height: 36px;
+    white-space: pre-wrap;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+}
+
+#addPanel {
+    display: none;
+}
+
+#addPanel.active {
+    display: block;
+}
+</style>
+</head>
+
+<body>
+<div id="app">
+    <div id="mapWrap">
+        <svg id="svg" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <pattern id="gridPattern" width="50" height="50" patternUnits="userSpaceOnUse">
+                    <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#333" stroke-width="4"/>
+                </pattern>
+            </defs>
+
+            <rect id="gridRect" x="0" y="0" width="10000" height="10000" fill="url(#gridPattern)"></rect>
+
+            <g id="roomsLayer"></g>
+            <g id="shelvesLayer"></g>
+            <g id="labelsLayer"></g>
+            <g id="markerLayer"></g>
+        </svg>
+    </div>
+
+    <div id="side">
+        <h2>FoodMap</h2>
+
+        <input id="searchInput" placeholder="Search food, room, shelf...">
+
+        <button id="toggleAddBtn">Add item</button>
+
+        <div id="addPanel">
+            <h3>Add / Edit Item</h3>
+
+            <label>Name</label>
+            <input id="foodNameInput" placeholder="Food item name">
+
+            <label>Image</label>
+            <input id="imageInput" type="file" accept="image/*">
+
+            <label>Room</label>
+            <input id="roomInput" maxlength="3" placeholder="Click room or enter code">
+
+            <label>Shelf</label>
+            <select id="shelfInput">
+                <option value="">Select room first</option>
+            </select>
+
+            <label>Notes</label>
+            <textarea id="notesInput" rows="3"></textarea>
+
+            <button id="saveItemBtn">Save item</button>
+            <button id="clearFormBtn">Clear form</button>
+            <button id="deleteItemBtn" class="danger" style="display:none;">Delete selected item</button>
+
+            <div class="small">
+                LAN server can add/edit/delete. GitHub Pages is view-only.
+            </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <h3>Selected</h3>
+        <div id="selectedPanel" class="small">Nothing selected.</div>
+
+        <div class="divider"></div>
+
+        <h3>Results</h3>
+        <div id="results"></div>
+
+        <div id="status"></div>
+    </div>
+</div>
+
+<script>
+"use strict";
+
+const svg = document.getElementById("svg");
+const gridRect = document.getElementById("gridRect");
+const roomsLayer = document.getElementById("roomsLayer");
+const shelvesLayer = document.getElementById("shelvesLayer");
+const labelsLayer = document.getElementById("labelsLayer");
+const markerLayer = document.getElementById("markerLayer");
+
+const searchInput = document.getElementById("searchInput");
+const toggleAddBtn = document.getElementById("toggleAddBtn");
+const addPanel = document.getElementById("addPanel");
+
+const foodNameInput = document.getElementById("foodNameInput");
+const imageInput = document.getElementById("imageInput");
+const roomInput = document.getElementById("roomInput");
+const shelfInput = document.getElementById("shelfInput");
+const notesInput = document.getElementById("notesInput");
+
+const saveItemBtn = document.getElementById("saveItemBtn");
+const clearFormBtn = document.getElementById("clearFormBtn");
+const deleteItemBtn = document.getElementById("deleteItemBtn");
+
+const selectedPanel = document.getElementById("selectedPanel");
+const results = document.getElementById("results");
+const statusBox = document.getElementById("status");
+
+let floorplan = {
+    config: { width: 10000, height: 10000, grid: 50 },
+    rooms: []
+};
+
+let foods = { items: [] };
+
+let canEdit = false;
+let selectedItemId = null;
+let selectedRoom = null;
+let selectedShelf = null;
+
+function setStatus(msg) {
+    statusBox.textContent = msg;
+}
+
+function width() {
+    return Number(floorplan.config.width);
+}
+
+function height() {
+    return Number(floorplan.config.height);
+}
+
+function grid() {
+    return Number(floorplan.config.grid || 50);
+}
+
+function storedToSvgPoint(p) {
+    return [p[0], height() - p[1]];
+}
+
+function pointsToSvgString(points) {
+    return points.map(p => {
+        const [x, y] = storedToSvgPoint(p);
+        return `${x},${y}`;
+    }).join(" ");
+}
+
+function centroid(points) {
+    let x = 0;
+    let y = 0;
+
+    for (const p of points) {
+        x += p[0];
+        y += p[1];
+    }
+
+    return [x / points.length, y / points.length];
+}
+
+function screenToStoredPoint(evt) {
+    const pt = svg.createSVGPoint();
+    pt.x = evt.clientX;
+    pt.y = evt.clientY;
+
+    const svgPoint = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+    return [
+        svgPoint.x,
+        height() - svgPoint.y
+    ];
+}
+
+function pointInPolygon(point, polygon, allowBoundary = true) {
+    const [x, y] = point;
+    let inside = false;
+
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const a = polygon[i];
+        const b = polygon[j];
+
+        if (allowBoundary && pointOnSegment(point, a, b)) return true;
+
+        const intersect =
+            ((a[1] > y) !== (b[1] > y)) &&
+            (x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]);
+
+        if (intersect) inside = !inside;
+    }
+
+    return inside;
+}
+
+function pointOnSegment(p, a, b) {
+    const cross = (p[1] - a[1]) * (b[0] - a[0]) - (p[0] - a[0]) * (b[1] - a[1]);
+    if (Math.abs(cross) > 1e-9) return false;
+
+    return p[0] >= Math.min(a[0], b[0]) &&
+           p[0] <= Math.max(a[0], b[0]) &&
+           p[1] >= Math.min(a[1], b[1]) &&
+           p[1] <= Math.max(a[1], b[1]);
+}
+
+function findRoomAtPoint(p) {
+    for (let i = floorplan.rooms.length - 1; i >= 0; i--) {
+        if (pointInPolygon(p, floorplan.rooms[i].polygon, true)) {
+            return floorplan.rooms[i];
+        }
+    }
+
+    return null;
+}
+
+function findRoomById(roomId) {
+    return floorplan.rooms.find(r => r.id === roomId) || null;
+}
+
+function findShelfById(room, shelfId) {
+    if (!room) return null;
+    return room.shelves.find(s => Number(s.id) === Number(shelfId)) || null;
+}
+
+function renderMap() {
+    roomsLayer.innerHTML = "";
+    shelvesLayer.innerHTML = "";
+    labelsLayer.innerHTML = "";
+    markerLayer.innerHTML = "";
+
+    svg.setAttribute("viewBox", `0 0 ${width()} ${height()}`);
+    gridRect.setAttribute("width", width());
+    gridRect.setAttribute("height", height());
+
+    const pattern = document.getElementById("gridPattern");
+    pattern.setAttribute("width", grid());
+    pattern.setAttribute("height", grid());
+    pattern.querySelector("path").setAttribute("d", `M ${grid()} 0 L 0 0 0 ${grid()}`);
+
+    for (const room of floorplan.rooms) renderRoom(room);
+    for (const room of floorplan.rooms) renderShelves(room);
+
+    renderLabels();
+    renderMarker();
+}
+
+function renderRoom(room) {
+    const isSelected = selectedRoom && selectedRoom.id === room.id;
+
+    const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    poly.setAttribute("points", pointsToSvgString(room.polygon));
+    poly.setAttribute("fill", isSelected ? "rgba(60,140,255,0.45)" : "rgba(60,140,255,0.25)");
+    poly.setAttribute("stroke", isSelected ? "#b8d8ff" : "#6da9ff");
+    poly.setAttribute("stroke-width", "20");
+    poly.style.cursor = "pointer";
+
+    poly.addEventListener("click", evt => {
+        evt.stopPropagation();
+        selectLocation(room, null);
+    });
+
+    roomsLayer.appendChild(poly);
+}
+
+function renderShelves(room) {
+    for (const shelf of room.shelves || []) {
+        if (!Array.isArray(shelf.point) || shelf.point.length !== 2) continue;
+
+        const isSelected =
+            selectedRoom &&
+            selectedShelf &&
+            selectedRoom.id === room.id &&
+            Number(selectedShelf.id) === Number(shelf.id);
+
+        const [x, y] = storedToSvgPoint(shelf.point);
+
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", x);
+        circle.setAttribute("cy", y);
+        circle.setAttribute("r", isSelected ? "130" : "95");
+        circle.setAttribute("fill", isSelected ? "rgba(80,255,120,0.9)" : "rgba(80,255,120,0.55)");
+        circle.setAttribute("stroke", isSelected ? "#d0ffc8" : "#79e686");
+        circle.setAttribute("stroke-width", "18");
+        circle.style.cursor = "pointer";
+
+        circle.addEventListener("click", evt => {
+            evt.stopPropagation();
+            selectLocation(room, shelf);
+        });
+
+        shelvesLayer.appendChild(circle);
+    }
+}
+
+function renderLabels() {
+    for (const room of floorplan.rooms) {
+        const minX = Math.min(...room.polygon.map(p => p[0]));
+        const minY = Math.min(...room.polygon.map(p => p[1]));
+
+        const labelPoint = room.labelOffset
+            ? [minX + room.labelOffset[0], minY + room.labelOffset[1]]
+            : centroid(room.polygon);
+
+        const [x, y] = storedToSvgPoint(labelPoint);
+
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", x);
+        text.setAttribute("y", y);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("dominant-baseline", "middle");
+        text.setAttribute("font-size", "260");
+        text.setAttribute("fill", "#ddd");
+        text.setAttribute("stroke", "#111");
+        text.setAttribute("stroke-width", "8");
+        text.textContent = room.id;
+        text.style.pointerEvents = "none";
+        labelsLayer.appendChild(text);
+
+        for (const shelf of room.shelves || []) {
+            if (!Array.isArray(shelf.point) || shelf.point.length !== 2) continue;
+
+            const [sx, sy] = storedToSvgPoint(shelf.point);
+
+            const st = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            st.setAttribute("x", sx);
+            st.setAttribute("y", sy);
+            st.setAttribute("text-anchor", "middle");
+            st.setAttribute("dominant-baseline", "middle");
+            st.setAttribute("font-size", "180");
+            st.setAttribute("fill", "#fff");
+            st.setAttribute("stroke", "#111");
+            st.setAttribute("stroke-width", "6");
+            st.textContent = shelf.id;
+            st.style.pointerEvents = "none";
+            labelsLayer.appendChild(st);
+        }
+    }
+}
+
+function renderMarker() {
+    if (!selectedRoom || !selectedShelf || !Array.isArray(selectedShelf.point)) return;
+
+    const [x, y] = storedToSvgPoint(selectedShelf.point);
+
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", x);
+    circle.setAttribute("cy", y);
+    circle.setAttribute("r", "170");
+    circle.setAttribute("fill", "none");
+    circle.setAttribute("stroke", "#ffdd66");
+    circle.setAttribute("stroke-width", "35");
+
+    markerLayer.appendChild(circle);
+}
+
+function updateShelfDropdown(room) {
+    shelfInput.innerHTML = "";
+
+    if (!room) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "Select room first";
+        shelfInput.appendChild(opt);
+        return;
+    }
+
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "Select shelf";
+    shelfInput.appendChild(blank);
+
+    for (const shelf of room.shelves || []) {
+        const opt = document.createElement("option");
+        opt.value = shelf.id;
+        opt.textContent = `Shelf ${shelf.id}`;
+        shelfInput.appendChild(opt);
+    }
+}
+
+function selectLocation(room, shelf) {
+    selectedRoom = room;
+    selectedShelf = shelf;
+
+    roomInput.value = room ? room.id : "";
+    updateShelfDropdown(room);
+
+    if (shelf) {
+        shelfInput.value = shelf.id;
+    }
+
+    selectedPanel.innerHTML = shelf
+        ? `<b>${escapeHtml(room.id)}-${escapeHtml(shelf.id)}</b><br>${escapeHtml(room.name)}`
+        : `<b>${escapeHtml(room.id)}</b><br>${escapeHtml(room.name)}<br><span class="small">Select/click a shelf.</span>`;
+
+    renderMap();
+}
+
+function selectFoodItem(item) {
+    selectedItemId = item.id || null;
+
+    const room = findRoomById(item.room);
+    const shelf = findShelfById(room, item.shelf);
+
+    selectedRoom = room;
+    selectedShelf = shelf;
+
+    foodNameInput.value = item.name || "";
+    roomInput.value = item.room || "";
+    updateShelfDropdown(room);
+    shelfInput.value = item.shelf || "";
+    notesInput.value = item.notes || "";
+
+    deleteItemBtn.style.display = canEdit && selectedItemId ? "block" : "none";
+
+    selectedPanel.innerHTML = `
+        <b>${escapeHtml(item.name)}</b><br>
+        Location: ${escapeHtml(item.room)}-${escapeHtml(item.shelf)}<br>
+        ${item.notes ? `<br>${escapeHtml(item.notes)}` : ""}
+        ${item.image ? `<img class="foodImg" src="${escapeHtml(item.image)}">` : ""}
+    `;
+
+    renderMap();
+    renderResults();
+}
+
+function renderResults() {
+    const q = searchInput.value.trim().toLowerCase();
+
+    const filtered = foods.items.filter(item => {
+        const haystack = [
+            item.name,
+            item.room,
+            item.shelf,
+            `${item.room}-${item.shelf}`,
+            item.notes
+        ].join(" ").toLowerCase();
+
+        return haystack.includes(q);
+    });
+
+    results.innerHTML = "";
+
+    if (filtered.length === 0) {
+        results.innerHTML = `<div class="small">No results.</div>`;
+        return;
+    }
+
+    for (const item of filtered) {
+        const div = document.createElement("div");
+        div.className = "foodItem";
+
+        if (item.id && item.id === selectedItemId) {
+            div.classList.add("selected");
+        }
+
+        div.innerHTML = `
+            <b>${escapeHtml(item.name)}</b><br>
+            <span class="small">${escapeHtml(item.room)}-${escapeHtml(item.shelf)}</span>
+            ${item.image ? `<img class="foodImg" src="${escapeHtml(item.image)}">` : ""}
+        `;
+
+        div.addEventListener("click", () => selectFoodItem(item));
+        results.appendChild(div);
+    }
+}
+
+function clearForm() {
+    selectedItemId = null;
+    foodNameInput.value = "";
+    imageInput.value = "";
+    roomInput.value = "";
+    updateShelfDropdown(null);
+    notesInput.value = "";
+    deleteItemBtn.style.display = "none";
+    selectedPanel.innerHTML = "Nothing selected.";
+    renderResults();
+}
+
+async function saveItem() {
+    if (!canEdit) {
+        setStatus("Editing is disabled on static hosting.");
+        return;
+    }
+
+    const name = foodNameInput.value.trim();
+    const room = roomInput.value.trim().toUpperCase();
+    const shelf = Number(shelfInput.value);
+    const notes = notesInput.value.trim();
+
+    if (!name) {
+        setStatus("Missing food name.");
+        return;
+    }
+
+    if (!/^[A-Z0-9]{3}$/.test(room)) {
+        setStatus("Room must be a 3-character code.");
+        return;
+    }
+
+    if (!Number.isInteger(shelf) || shelf < 1) {
+        setStatus("Shelf must be a positive integer.");
+        return;
+    }
+
+    let existingImage = null;
+
+    if (selectedItemId) {
+        const existing = foods.items.find(x => x.id === selectedItemId);
+        existingImage = existing ? existing.image : null;
+    }
+
+    let imagePath = existingImage;
+
+    if (imageInput.files.length > 0) {
+        const formData = new FormData();
+        formData.append("image", imageInput.files[0]);
+
+        const imgRes = await fetch("/api/images", {
+            method: "POST",
+            body: formData
+        });
+
+        const imgData = await imgRes.json().catch(() => ({}));
+
+        if (!imgRes.ok) {
+            setStatus(imgData.error || "Image upload failed.");
+            return;
+        }
+
+        imagePath = imgData.path;
+    }
+
+    const payload = {
+        name,
+        room,
+        shelf,
+        image: imagePath,
+        notes
+    };
+
+    const url = selectedItemId
+        ? `/api/foods/${encodeURIComponent(selectedItemId)}`
+        : "/api/foods";
+
+    const method = selectedItemId ? "PUT" : "POST";
+
+    const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+        setStatus(data.error || "Save failed.");
+        return;
+    }
+
+    await loadFoods();
+
+    selectedItemId = data.item.id;
+    selectFoodItem(data.item);
+
+    imageInput.value = "";
+    setStatus("Item saved.");
+}
+
+async function deleteSelectedItem() {
+    if (!canEdit || !selectedItemId) return;
+
+    const item = foods.items.find(x => x.id === selectedItemId);
+    if (!item) return;
+
+    const ok = confirm(`Delete ${item.name}?`);
+    if (!ok) return;
+
+    const res = await fetch(`/api/foods/${encodeURIComponent(selectedItemId)}`, {
+        method: "DELETE"
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+        setStatus(data.error || "Delete failed.");
+        return;
+    }
+
+    await loadFoods();
+    clearForm();
+    setStatus("Item deleted.");
+}
+
+function escapeHtml(str) {
+    return String(str ?? "").replace(/[&<>"']/g, ch => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+    }[ch]));
+}
+
+async function loadFloorplan() {
+    const res = await fetch("floorplan/floorplan.json", { cache: "no-store" });
+
+    if (!res.ok) {
+        setStatus("Failed to load floorplan/floorplan.json.");
+        return;
+    }
+
+    floorplan = await res.json();
+    renderMap();
+}
+
+async function loadFoods() {
+    const res = await fetch("data/foods.json", { cache: "no-store" });
+
+    if (!res.ok) {
+        setStatus("Failed to load data/foods.json.");
+        return;
+    }
+
+    foods = await res.json();
+
+    if (!Array.isArray(foods.items)) {
+        foods = { items: [] };
+    }
+
+    renderResults();
+}
+
+async function detectEditMode() {
+    try {
+        const res = await fetch("/api/foods", { cache: "no-store" });
+        canEdit = res.ok;
+    } catch {
+        canEdit = false;
+    }
+
+    if (!canEdit) {
+        saveItemBtn.disabled = true;
+        imageInput.disabled = true;
+        toggleAddBtn.textContent = "View only";
+        setStatus("Static/view-only mode.");
+    } else {
+        setStatus("LAN edit mode.");
+    }
+}
+
+svg.addEventListener("click", evt => {
+    const p = screenToStoredPoint(evt);
+    const room = findRoomAtPoint(p);
+
+    if (!room) return;
+
+    const shelf = (room.shelves || []).find(shelf => {
+        if (!Array.isArray(shelf.point)) return false;
+        const dx = shelf.point[0] - p[0];
+        const dy = shelf.point[1] - p[1];
+        return Math.sqrt(dx * dx + dy * dy) <= 200;
+    }) || null;
+
+    selectLocation(room, shelf);
+});
+
+roomInput.addEventListener("input", () => {
+    const room = findRoomById(roomInput.value.trim().toUpperCase());
+    selectedRoom = room;
+    selectedShelf = null;
+    updateShelfDropdown(room);
+    renderMap();
+});
+
+shelfInput.addEventListener("change", () => {
+    if (!selectedRoom) return;
+
+    selectedShelf = findShelfById(selectedRoom, Number(shelfInput.value));
+    renderMap();
+});
+
+searchInput.addEventListener("input", renderResults);
+
+toggleAddBtn.addEventListener("click", () => {
+    addPanel.classList.toggle("active");
+});
+
+saveItemBtn.addEventListener("click", saveItem);
+clearFormBtn.addEventListener("click", clearForm);
+deleteItemBtn.addEventListener("click", deleteSelectedItem);
+
+async function main() {
+    await detectEditMode();
+    await loadFloorplan();
+    await loadFoods();
+}
+
+main();
+</script>
+</body>
+</html>
