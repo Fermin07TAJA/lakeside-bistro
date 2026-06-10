@@ -7,6 +7,94 @@
       "shelf": 1,
       "image": "data/images/23970b473b7e4b37b75a3bdbe3c526e3.jpg",
       "notes": ""
+    },
+    {
+      "id": "28efe1cff35b4dffbdb12031f63fe9d0",
+      "name": "Fryer and Grill",
+      "room": "FRY",
+      "shelf": 3,
+      "image": "data/images/a490d663fb38420e9a99ab4ebe31b21e.jpg",
+      "notes": "Tools for cleaning grill underneath"
+    },
+    {
+      "id": "ec3330bb23c9430891fa95344db81a7d",
+      "name": "Dry Food",
+      "room": "SDA",
+      "shelf": 2,
+      "image": "data/images/068c0d15b7cf4c31864c80f1ae6a43b2.jpg",
+      "notes": "Gatorades cups napkins soap"
+    },
+    {
+      "id": "cc88b444ad484811b5afb5494acfdc6e",
+      "name": "Misc",
+      "room": "SSD",
+      "shelf": 1,
+      "image": "data/images/5811170b72c44af18d2144983cd189f5.jpg",
+      "notes": "Oils napkins plastic trays"
+    },
+    {
+      "id": "0a7ee6e6042c4d00b981c9dc37603dba",
+      "name": "Dishwasher and Sink",
+      "room": "DSH",
+      "shelf": 3,
+      "image": "data/images/6410385474c9412694cc295120f3a0bd.jpg",
+      "notes": ""
+    },
+    {
+      "id": "65918bdbc23b4dccb5b4c6070a84bfd2",
+      "name": "Pizza Ovens",
+      "room": "PZA",
+      "shelf": 1,
+      "image": "data/images/b43a92a380074cbe96750ca25b443da6.jpg",
+      "notes": ""
+    },
+    {
+      "id": "449a1a76900f4ac3874ae1b3ee334853",
+      "name": "Beer",
+      "room": "ICE",
+      "shelf": 4,
+      "image": "data/images/8c452ce28d844e9ba35c192a5bbefc4f.png",
+      "notes": "Alcohol"
+    },
+    {
+      "id": "c4b9a4a0b65245e4960d4f20273f6113",
+      "name": "Sauces",
+      "room": "ICE",
+      "shelf": 6,
+      "image": "data/images/4c347d959aa44691a0a512bd333b0eaf.png",
+      "notes": ""
+    },
+    {
+      "id": "fe2280b963df489fb88de95919324cf7",
+      "name": "Cheese and Bread",
+      "room": "ICE",
+      "shelf": 2,
+      "image": "data/images/e04e501ba3e049cca7930df355712e9a.png",
+      "notes": "Provolone\nAmerican\nJack\nCheddar\nMozzarella\nRye\nSourdough"
+    },
+    {
+      "id": "2dc52467fbab4a4abf31d2ad3d089f9f",
+      "name": "Egg",
+      "room": "ICE",
+      "shelf": 1,
+      "image": "data/images/3dcb83a791ec4ad6a7ebaf06e87e04ee.png",
+      "notes": ""
+    },
+    {
+      "id": "11a032c8a6de49d9ac7357ee8686c35c",
+      "name": "Butter & Potatoes",
+      "room": "ICE",
+      "shelf": 1,
+      "image": "data/images/2515409f8e694e06aa1af4bfa500ffd9.png",
+      "notes": ""
+    },
+    {
+      "id": "109af6ab54e64526aabbf0ea9a2ad6e6",
+      "name": "Register",
+      "room": "REG",
+      "shelf": 1,
+      "image": "data/images/8543859edb3d40319a203beecc7ef077.png",
+      "notes": ""
     }
   ]
 }
